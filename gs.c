@@ -174,9 +174,9 @@ int sequential(){
             }
             unknown = (unknown) / a[i][i];
             unknowns[i] = unknown;
-            printf("%d: %f \n", i, unknown);
+            //printf("%d: %f \n", i, unknown);
             //calculate err of current X
-            printf("unknowns[i]: %f, x[i]: %f\n", unknowns[i], x[i]);
+            //printf("unknowns[i]: %f, x[i]: %f\n", unknowns[i], x[i]);
             currErr = ((float)(unknowns[i] - (float)x[i])/(float)(unknowns[i]));
             if(currErr < 0){
               //makes postive
@@ -190,122 +190,22 @@ int sequential(){
                 maxErr = currErr;
               }
             }
-            printf("currentError: %f\n", currErr);
+            //printf("currentError: %f\n", currErr);
             //update testErr to be max of the set
         }
         //with each iteration, maxErr will get smaller
         //copy new unknowns to x[]
-        memcpy(x, unknowns, sizeof(x) + sizeof(float));
-        printf("MaxErr: %f\n", maxErr);
+        for(i = 0; i < num; i++){
+          x[i] = unknowns[i];
+        }
+        //memcpy(x, unknowns, sizeof(x) + sizeof(float));
+        //printf("MaxErr: %f\n", maxErr);
         testErr = maxErr;
         nit++;
     }while(testErr > err || testErr < (-1)*err);
     return nit;
 }
  
-
-int parallel(){
-    /*
-    float **a; The coefficients
-    float *x;  The unknowns 
-    float *b;  The constants 
-    float err; The absolute relative error
-    */
-    int num = 0; number of unknowns
-    int nit = 0;
-    
-    int comm_sz;
-    int my_rank;
-     
-    MPI_Init(NULL, NULL);
-    //all processes in comm world have access to stdout and sterr
-    //only process 0 can access stdin
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    //comm sz is number of processors
-    //my rank is current processor
-    
-    printf("Proc %d of %d:", my_rank, comm_sz);
-    int quotient, my_n_count, my_first_i, my_last_i = 0;
-
-    //figures out which cores get what jobs
-    if(num % comm_sz == 0){
-        quotient = num / comm_sz;
-        my_n_count = quotient;
-        my_first_i = my_rank * my_n_count;
-        my_last_i = my_first_i + my_n_count;
-    }
-    else {
-        quotient = num / comm_sz;
-        remainder = num % comm_sz;
-        if(my_rank < remainder){
-            my_n_count = quotient + 1;
-            my_first_i = my_rank * my_n_count;
-        }
-        else{
-            my_n_count = quotient;
-            my_first_i = my_rank * my_n_count + remainder;
-        }
-        my_last_i = my_first_i + my_n_count;
-    }
-
-    do{
-      float maxErr = 0;
-      float currErr = 0;
-      if(my_rank != 0){
-          int i = 0;
-          for(i = my_first_i; i < my_last_i; i++){
-              float unknown = b[i];
-              int j = 0;
-              //numerator calculation
-              for(j = 0; j < num; j++){
-                  if(i != j){
-                      unknown = unknown - a[i][j]*x[j];
-                  }
-              }
-              unknown = (unknown) / a[i][i];
-              unknowns[i] = unknown;
-              printf("%d: %f \n", i, unknown);
-              //calculate err of current X
-              printf("unknown[i]: %f, x[i]: %f\n", unknowns[i], x[i]);
-              currErr = ((float)(unknowns[i] - (float)x[i])/(float)(unknowns[i]));
-              printf("currentError: %f\n", currErr);
-              //update testErr to be max of the set
-              if(currErr > maxErr){
-                  maxErr = currErr;
-              }
-              x[i] = unknowns[i];
-          }
-          MPI_Send(maxErr, sizeof(maxErr), MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
-      } else {
-      int q;
-      float testErr;
-      float newErr;
-          for(q = 1; q < comm_sz; q++) {
-              MPI_Recv(maxErr, sizeof(maxErr), MPI_FLOAT, q, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-              //find the largest error
-              if(testErr < maxErr){
-                 testErr = maxErr; 
-              }
-          }
-          newErr = testErr;
-          nit++;
-      }
-    } while(newErr > err || newErr < (-1)*err);
-    MPI_Finalize();
-    return nit;
-    
-
-    /*
-    Pseudocode
-    
-    if (my_rank != 0)
-        send maxErr to core 0
-    else
-        calculate unknown with old values and
-    */
-}
-
 int main(int argc, char *argv[])
 {
 
@@ -329,14 +229,86 @@ int main(int argc, char *argv[])
   */
  check_matrix();
  
- nit = sequential();
- 
+ //nit = sequential();
+
+ //parallel things
+  int comm_sz; //number of processes
+  int my_rank; //my process rank
+  //char greeting[100];
+  //float unknowns[num];
+  float testErr = 0;
+  float currErr = 0;
+  float maxErr = 0;
+  float unknown = 0;
+
+  /*No MPI calls before this*/
+  MPI_Init(&argc, &argv);
+  //number of processes in communicator  
+  MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
+  //rank of process making this call
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+
+  int quotient, my_n_count, my_first_i, my_last_i = 0;
+
+  //figures out which cores get what jobs
+  //tasks divide evenly
+  
+      my_n_count = num / comm_sz;
+      my_first_i = my_rank * my_n_count;
+      my_last_i = my_first_i + my_n_count;
+      //printf("test!!!!!!!\n");
+  //printf("my n count: %d\n", my_n_count);
+  float *unknowns = malloc(sizeof(float) * my_n_count);
+  //printf("core %d, my_first_i: %d, my_last_i: %d\n", my_rank, my_first_i, my_last_i);
+  do{
+    maxErr = 0;
+    int count = 0;
+    for(i = my_first_i; i < my_last_i; i++){
+        unknown = b[i];
+        int j = 0;
+        //numerator calculation
+        for(j = 0; j < num; j++){
+            if(i != j){
+                unknown = unknown - a[i][j]*x[j];
+            }
+        }
+        unknown = (unknown) / a[i][i];
+        //printf("unknown: %f\n", unknown);
+        unknowns[count] = unknown;
+        //printf("We're working with unknown #%d. This is it's new val: %f \n", i, unknown);
+        //calculate err of current X
+        currErr = fabs((float)(unknowns[count] - (float)x[i])/(float)(unknowns[count]));
+          if(currErr > maxErr){
+            maxErr = currErr;
+          }
+        //x[i] = unknowns[count];
+        count++;
+    }
+    //printf("Hello!!!!!!!!!!!!!!!!!!\n");
+    //printf("num:%d\n", num);
+    MPI_Allgather(unknowns, my_n_count, MPI_FLOAT, x, my_n_count, MPI_FLOAT, MPI_COMM_WORLD);
+    //printf("Hello!!!!!!!!!!!!!!!!!!\n");
+    MPI_Allreduce(&maxErr, &testErr, 1, MPI_FLOAT, MPI_MAX, MPI_COMM_WORLD);
+    nit++;
+    //if core isn't 0
+    
+    //free(unknowns);
+
+  } while(testErr > err || testErr < (-1)*err);
+  
+
+
+  MPI_Finalize();
+ /*no MPIcalls after this*/
  /* Writing to the stdout */
  /* Keep that same format */
- for( i = 0; i < num; i++)
-   printf("%f\n",x[i]);
- 
- printf("total number of iterations: %d\n", nit);
+ if(my_rank == 0){
+     for( i = 0; i < num; i++)
+      printf("%f\n",x[i]);
+     printf("total number of iterations: %d\n", nit);
+  }
+
  
  exit(0);
 
